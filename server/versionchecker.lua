@@ -1,19 +1,80 @@
-local resource = GetCurrentResourceName()
+-----------------------------------------------------------------------
+-- Improved Version Checker for Rexshack-RedM Resources
+----------------------------------------------------------------------- 
 
-local function printStatus(kind, message)
-    local color = kind == 'success' and '^2' or '^1'
-    print(('^5[%s]%s %s^7'):format(resource, color, message))
+local resourceName = GetCurrentResourceName()
+local githubRawBase = 'https://raw.githubusercontent.com/Rexshack-RedM/rsg-versioncheckers/main/'
+
+local function printLog(type, message)
+    local color = (type == 'success' and '^2') or (type == 'warning' and '^3') or '^1'
+    print(('[%s]%s %s^7'):format(resourceName, color, message))
 end
 
-PerformHttpRequest('https://raw.githubusercontent.com/RexShackGaming/rex-versioncheckers/main/' .. resource .. '/version.txt', function(status, body)
-    if status ~= 200 or not body then
-        return printStatus('error', 'Currently unable to run a version check.')
+-- Simple semantic version comparison (supports major.minor.patch)
+local function isVersionOutdated(current, latest)
+    local function splitVersion(v)
+        local major, minor, patch = v:match("(%d+)%.(%d+)%.(%d+)")
+        if major then
+            return {tonumber(major), tonumber(minor) or 0, tonumber(patch) or 0}
+        end
+        return {0, 0, 0} -- fallback
     end
 
-    local latest = body:gsub('%s+', '')
-    local current = GetResourceMetadata(resource, 'version')
+    local c = splitVersion(current)
+    local l = splitVersion(latest)
 
-    if latest ~= current then
-        printStatus('error', ('You are currently running an outdated version, please update to version %s'):format(latest))
+    for i = 1, 3 do
+        if l[i] > c[i] then return true
+        elseif l[i] < c[i] then return false
+        end
     end
-end)
+    return false -- equal
+end
+
+local function CheckVersion()
+    if not Config.VersionCheck then return end
+    local currentVersion = GetResourceMetadata(resourceName, 'version')
+    if not currentVersion then
+        printLog('error', 'Unable to read current resource version from fxmanifest.lua!')
+        return
+    end
+
+    local versionUrl = githubRawBase .. resourceName .. '/version.txt'
+
+    PerformHttpRequest(versionUrl, function(statusCode, remoteVersion, headers)
+        if statusCode == 404 then
+            printLog('warning', 'No version entry found on GitHub for this resource (skipping check).')
+            return
+        end
+
+        if statusCode ~= 200 then
+            printLog('error', ('Version check failed (HTTP %s). Check your internet or the GitHub URL.'):format(statusCode))
+            return
+        end
+
+        if not remoteVersion or remoteVersion == '' then
+            printLog('error', 'Received empty version data from GitHub.')
+            return
+        end
+
+        -- Trim whitespace/newlines
+        remoteVersion = remoteVersion:gsub('%s+$', '')
+
+        if currentVersion == remoteVersion then
+            printLog('success', 'You are running the latest version!')
+            return
+        end
+
+        if isVersionOutdated(currentVersion, remoteVersion) then
+            printLog('error', ('OUTDATED! Please update to version %s'):format(remoteVersion))
+            printLog('error', 'Download from: https://github.com/Rexshack-RedM/'..GetCurrentResourceName()..'')
+        else
+            printLog('warning', ('You are running a newer version (%s) than the remote (%s). Possible dev build?'):format(currentVersion, remoteVersion))
+        end
+    end, 'GET')
+end
+
+--------------------------------------------------------------------------------------------------
+-- Start version check on resource start
+--------------------------------------------------------------------------------------------------
+CheckVersion()
